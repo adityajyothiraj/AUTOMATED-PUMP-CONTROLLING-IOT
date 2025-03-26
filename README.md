@@ -1,6 +1,7 @@
 # AUTOMATED-PUMP-CONTROLLING-IOT
 The Automatic Pump Controlling System is an IoT-based solution designed to manage pump operations efficiently. The system consists of three main controllers that interact with each other and a central Firebase database to monitor and control the pump.
 
+![neer_main (1)](https://github.com/user-attachments/assets/9bc845ec-f9f7-4b31-91c6-f38c46c28318)
 
 ## CODE MAIN
 ```
