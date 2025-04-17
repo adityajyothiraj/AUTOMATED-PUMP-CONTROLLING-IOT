@@ -1,4 +1,3 @@
-```
 #include <Arduino.h>
 #include <Wire.h>
 #include <FirebaseClient.h>
@@ -222,4 +221,4 @@ void Connect_WiFi() {
   app.getApp<RealtimeDatabase>(Database);
   Database.url(DATABASE_URL);
 }
-```
+
