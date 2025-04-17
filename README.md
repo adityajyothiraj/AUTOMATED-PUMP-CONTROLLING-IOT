@@ -396,4 +396,172 @@ void Connect_WiFi() {
 
 ## CODE PANEL
 ```
+#include <Arduino.h>
+#include <otadrive_esp.h>
+#include <ESP8266WiFi.h>
+#include <FirebaseClient.h>
+#include "ExampleFunctions.h" // Provides the functions used in the examples.
+#include <ESP8266_ISR_Servo.h>
+//#include <ESP8266_PWM.h>
+//#include <ESP32PWM.h>
+
+#ifndef ESP8266
+  #error This code is designed to run on ESP8266 platform! Please check your Tools->Board setting.
+#endif
+
+#define TIMER_INTERRUPT_DEBUG       1
+#define ISR_SERVO_DEBUG             1
+
+// To be included only in main(), .ino with setup() to avoid `Multiple Definitions` Linker Error
+#include "ESP8266_ISR_Servo.h"
+
+// Published values for SG90 servos; adjust if needed
+#define MIN_MICROS      800  //544
+#define MAX_MICROS      2450
+
+int servoIndex1  = -1;
+int servoIndex2  = -1;
+
+#define WIFI_SSID "realme GT 6T"
+#define WIFI_PASSWORD "Connect12345"
+
+#define APIKEY "21ce97cd-bec3-4797-8744-f7b073182bb0"
+#define FW_VER "1.0.1"
+
+#define API_KEY "AIzaSyBMaU5oFpnm64xA1wJoGN3u2c3LyQtX4oM"
+#define USER_EMAIL "adityajyothirajyt@gmail.com"
+#define USER_PASSWORD "Firebase123"
+#define DATABASE_URL "https://neer-d1234-default-rtdb.firebaseio.com/"
+
+SSL_CLIENT ssl_client;
+// This uses built-in core WiFi/Ethernet for network connection.
+// See examples/App/NetworkInterfaces for more network examples.
+using AsyncClient = AsyncClientClass;
+AsyncClient aClient(ssl_client);
+UserAuth user_auth(API_KEY, USER_EMAIL, USER_PASSWORD, 3000 /* expire period in seconds (<3600) */);
+FirebaseApp app;
+RealtimeDatabase Database;
+
+void Connect_WiFi();
+String filter(String);
+
+
+unsigned long lastFirebaseQueryTime = 0;
+unsigned long firebaseQueryInterval = 500;  // 5 seconds interval
+String dataBase = "  ";
+//int f = 0, g = 0;
+uint16_t pulseRight = 3000;  // Small rightward motion
+uint16_t pulseStop = 1500;
+char lastButtonState; // To track the previous state
+
+void setup() {
+  Connect_WiFi();
+  servoIndex1 = ISR_Servo.setupServo(D1, MIN_MICROS, MAX_MICROS);
+  servoIndex2 = ISR_Servo.setupServo(D2, MIN_MICROS, MAX_MICROS);
+  //ISR_Servo.setPosition(servoIndex1, 180);
+  ISR_Servo.setPosition(servoIndex2, 180);
+  OTADRIVE.setInfo(APIKEY, FW_VER);
+}
+
+void loop() {
+  app.loop();
+  //Serial.print("State = ");
+  //Serial.println(lastButtonState);
+  //Serial.print("State = ");
+  //Serial.println(dataBase[0]);
+  //yield(); 
+
+  unsigned long currentMillis = millis();
+  if (currentMillis - lastFirebaseQueryTime >= firebaseQueryInterval) {
+    lastFirebaseQueryTime = currentMillis;
+    dataBase = filter(Database.get<String>(aClient, "DATABASE"));
+    //Serial.print("BUTTONSTATE = ");
+    //Serial.println(buttonState);
+  }
+
+
+  // Check if button state has changed
+  if (dataBase[0] != lastButtonState) {
+    if (dataBase[0] == '2') {
+      Serial.println("On");
+     
+      ISR_Servo.setPulseWidth(servoIndex1, pulseRight);
+      //ISR_Servo.setPosition(servoIndex2, 0);
+      delay(500);                   // Very short movement
+      //ISR_Servo.setPosition(servoIndex2, 180);
+      ISR_Servo.setPulseWidth(servoIndex1, pulseStop);
+    }
+      //myservo.write(0);  // Uncomment to move the servo if needed
+      //ISR_Servo.setPosition(servoIndex1, 90);
+      //f = 0; // Reset f to ensure only one "On" print
+    if (dataBase[0] == '1') {
+      Serial.println("Off");
+      ISR_Servo.setPosition(servoIndex2, 0);
+      delay(2000);
+      ISR_Servo.setPosition(servoIndex2, 180);
+      //g = 0; // Reset g to ensure only one "Off" print
+    }
+    lastButtonState = dataBase[0]; // Update the last button state
+  }
+}
+
+
+  /*
+  if(buttonState == "1" && f == 0){
+    Serial.println("Servo ON");
+    // myservo.write(90);  // Uncomment to move the servo if needed
+    // delay(2000);
+    // myservo.write(0);   // Uncomment to reset the servo if needed
+    // delay(2000);
+    f = 1;  // Mark that servo has been turned on
+  }
+
+  if(buttonState == "0" && f == 0){
+    Serial.println("Servo OFF");
+    // myservo.write(90);  // Uncomment to move the servo if needed
+    // delay(2000);
+    // myservo.write(0);   // Uncomment to reset the servo if needed
+    // delay(2000);
+    g = 1;  // Mark that servo has been turned off
+  }
+    */
+   //yield();
+
+
+
+String filter(String msg) {
+  msg.replace("[", "");
+  msg.replace("]", "");
+  msg.replace("\\", "");
+  msg.replace("\"", "");
+  return msg;
+}
+
+void Connect_WiFi() {
+  Serial.begin(9600);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  Serial.print("Connecting to Wi-Fi");
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    if (OTADRIVE.timeTick(30)) {
+      OTADRIVE.updateFirmware();
+    }
+    Serial.print(".");
+    delay(300);
+  }
+  Serial.println();
+  Serial.print("Connected with IP: ");
+  Serial.println(WiFi.localIP());
+  Serial.println();
+
+  Firebase.printf("Firebase Client v%s\n", FIREBASE_CLIENT_VERSION);
+  set_ssl_client_insecure_and_buffer(ssl_client);
+
+  Serial.println("Initializing app...");
+  initializeApp(aClient, app, getAuth(user_auth), 120 * 1000, auth_debug_print);
+  app.getApp<RealtimeDatabase>(Database);
+  Database.url(DATABASE_URL);
+}
+
 ```
