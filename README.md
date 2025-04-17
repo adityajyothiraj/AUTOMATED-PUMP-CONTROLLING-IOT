@@ -6,6 +6,7 @@ The Automatic Pump Controlling System is an IoT-based solution designed to manag
 ## CODE MAIN
 ```
 #include <Arduino.h>
+#include <Wire.h>
 #include <FirebaseClient.h>
 #include "ExampleFunctions.h" // Provides the functions used in the examples.
 #include <otadrive_esp.h>
@@ -14,9 +15,9 @@ The Automatic Pump Controlling System is an IoT-based solution designed to manag
 #define led_Off 5
 #define led_On 16
 #define led_Auto 17
-#define button_Off 18
-#define button_On 19
-#define button_Auto 36
+#define button_Off 34
+#define button_On 35
+#define button_Auto 21
 #define relay 23
 #define I2C_SDA 32
 #define I2C_SCL 33
@@ -24,14 +25,18 @@ The Automatic Pump Controlling System is an IoT-based solution designed to manag
 #define WIFI_SSID "PUMP"
 #define WIFI_PASSWORD "Pump*123"
 
-#define APIKEY "f7abd582-05f7-4468-b84d-ee9c4c468426"
-#define FW_VER "1.0.2"
+#define APIKEY "c6eab4fa-591a-4672-ac9d-d040bc4935cd"
+#define FW_VER "1.0.1"
 
 #define API_KEY "AIzaSyBMaU5oFpnm64xA1wJoGN3u2c3LyQtX4oM"
 #define USER_EMAIL "adityajyothirajyt@gmail.com"
 #define USER_PASSWORD "Firebase123"
 #define DATABASE_URL "https://neer-d1234-default-rtdb.firebaseio.com/"
-
+/*
+IPAddress local_ip(192, 168, 1, 100);  // Static IP address
+IPAddress gateway(192, 168, 1, 1);     // Router's gateway IP
+IPAddress subnet(255, 255, 255, 0);    // Subnet mask
+*/
 SSL_CLIENT ssl_client;
 // This uses built-in core WiFi/Ethernet for network connection.
 // See examples/App/NetworkInterfaces for more network examples.
@@ -49,24 +54,43 @@ String filter(String);
 unsigned long lastFirebaseQueryTime = 0;
 unsigned long firebaseQueryInterval = 500;  // 5 seconds interval
 
-String buttonState;
-String autoState;
+String dataBase = "  ";
+int On = 0, Off = 0, Auto = 0;
 
 const int debounceDelay = 50;  // Debounce delay in milliseconds
 unsigned long lastDebounceTime_Off = 0;
 unsigned long lastDebounceTime_On = 0;
 unsigned long lastDebounceTime_Auto = 0;
 
-void setup()
-{
+// Flags for interrupt handling
+volatile bool buttonOffPressed = false;
+volatile bool buttonOnPressed = false;
+volatile bool buttonAutoPressed = false;
+
+// Interrupt Service Routines (ISRs) for each button press
+void IRAM_ATTR handleButtonOff() {
+  buttonOffPressed = true;
+}
+
+void IRAM_ATTR handleButtonOn() {
+  buttonOnPressed = true;
+}
+
+void IRAM_ATTR handleButtonAuto() {
+  buttonAutoPressed = true;
+}
+
+void setup() {
   Connect_WiFi();
+  
   pinMode(led_Off, OUTPUT);
   pinMode(led_On, OUTPUT);
   pinMode(led_Auto, OUTPUT);
-  pinMode(button_Off, INPUT);
-  pinMode(button_On, INPUT);
-  pinMode(button_Auto, INPUT);
+  pinMode(button_Off, INPUT_PULLUP);  // Use pull-up resistor for button
+  pinMode(button_On, INPUT_PULLUP);
+  pinMode(button_Auto, INPUT_PULLUP);
   pinMode(relay, OUTPUT);
+
   lcd.init(I2C_SDA, I2C_SCL);                      
   lcd.backlight();                                  
   lcd.clear();    
@@ -74,54 +98,73 @@ void setup()
   lcd.print("NEER H20");
   lcd.setCursor(3, 1);
   lcd.print("SAVE WATER");
-  OTADRIVE.setInfo(APIKEY, FW_VER); 
+
+  OTADRIVE.setInfo(APIKEY, FW_VER);
+
+  // Attach interrupts for each button
+  attachInterrupt(digitalPinToInterrupt(button_Off), handleButtonOff, FALLING);
+  attachInterrupt(digitalPinToInterrupt(button_On), handleButtonOn, FALLING);
+  attachInterrupt(digitalPinToInterrupt(button_Auto), handleButtonAuto, FALLING);
 }
 
-void loop()
-{
+void loop() {
   app.loop();
-  yield(); 
+  //yield();
 
   unsigned long currentMillis = millis();
 
   // Firebase operations at intervals
   if (currentMillis - lastFirebaseQueryTime >= firebaseQueryInterval) {
     lastFirebaseQueryTime = currentMillis;
-    buttonState = filter(Database.get<String>(aClient, "BUTTONSTATE"));
-    autoState = filter(Database.get<String>(aClient, "AUTOSTATE"));
+    dataBase = filter(Database.get<String>(aClient, "DATABASE"));
   }
 
-  // Handle button presses with debounce
-  // Button Off
-  if (digitalRead(button_Off) == 0 && (millis() - lastDebounceTime_Off) > debounceDelay) {
-    Database.set<String>(aClient, "BUTTONSTATE", "0");
-    lastDebounceTime_Off = millis();  // Update the debounce time
-  }
-
-  // Button On
-  if (digitalRead(button_On) == 0 && (millis() - lastDebounceTime_On) > debounceDelay) {
-    Database.set<String>(aClient, "BUTTONSTATE", "1");
-    lastDebounceTime_On = millis();  // Update the debounce time
-  }
-
-  // Button Auto
-  if (digitalRead(button_Auto) == 0 && (millis() - lastDebounceTime_Auto) > debounceDelay) {
-    if (autoState == "0") {
-      Database.set<String>(aClient, "AUTOSTATE", "1");
-    } else if (autoState == "1") {
-      Database.set<String>(aClient, "AUTOSTATE", "0");
+  // Handle button presses using interrupt flags (debouncing already handled in ISRs)
+  if (buttonOffPressed && (millis() - lastDebounceTime_Off) > debounceDelay) {
+    if(dataBase[1] == '0'){
+      dataBase[0] = '1';
     }
-    lastDebounceTime_Auto = millis();  // Update the debounce time
+    else if(dataBase[1] == '1'){
+      dataBase[1] = '0';
+      dataBase[0] = '1';
+    }
+    Database.set<String>(aClient, "DATABASE", dataBase);
+    lastDebounceTime_Off = millis();
+    buttonOffPressed = false;  // Reset the flag
+  }
+
+  if (buttonOnPressed && (millis() - lastDebounceTime_On) > debounceDelay) {
+    if(dataBase[1] == '0'){
+      dataBase[0] = '2';
+    }
+    else if(dataBase[1] == '1'){
+      dataBase[1] = '0';
+      dataBase[0] = '2';
+    }
+    Database.set<String>(aClient, "DATABASE", dataBase);
+    lastDebounceTime_On = millis();
+    buttonOnPressed = false;  // Reset the flag
+  }
+
+  if (buttonAutoPressed && (millis() - lastDebounceTime_Auto) > debounceDelay) {
+    if (dataBase[1] == '0') {
+      dataBase[1] = '1';
+    } else if (dataBase[1] == '1') {
+      dataBase[1] = '0';
+    }
+    Database.set<String>(aClient, "DATABASE", dataBase);
+    lastDebounceTime_Auto = millis();
+    buttonAutoPressed = false;  // Reset the flag
   }
 
   // Logic for button and auto state
-  if (buttonState == "0") {
+  if (dataBase[0] == '1') {
     lcd.setCursor(0, 1);
     lcd.print("     PUMP OFF    ");
     digitalWrite(led_On, LOW);
     digitalWrite(led_Off, HIGH);
     digitalWrite(relay, LOW);
-  } else if (buttonState == "1") {
+  } else if (dataBase[0] == '2') {
     lcd.setCursor(0, 1);
     lcd.print("     PUMP ON   ");
     digitalWrite(led_Off, LOW);
@@ -129,24 +172,26 @@ void loop()
     digitalWrite(relay, HIGH);
   }
 
-  if (autoState == "0" && buttonState == "0") {
+  if (dataBase[1] == '0' && dataBase[0] == '1') {
     digitalWrite(led_Auto, LOW);
     lcd.setCursor(0, 1);
     lcd.print("     PUMP OFF    ");
-  } else if (autoState == "0" && buttonState == "1") {
+  } else if (dataBase[1] == '0' && dataBase[0] == '2') {
     digitalWrite(led_Auto, LOW);
     lcd.setCursor(0, 1);
     lcd.print("     PUMP ON    ");
-  } else if (autoState == "1" && buttonState == "0") {
+  } else if (dataBase[1] == '1' && dataBase[0] == '1') {
     digitalWrite(led_Auto, HIGH);
     lcd.setCursor(0, 1);
     lcd.print("  PUMP OFF  AUTO");
-  } else if (autoState == "1" && buttonState == "1") {
+    delay(500);
+  } else if (dataBase[1] == '1' && dataBase[0] == '2') {
     digitalWrite(led_Auto, HIGH);
     lcd.setCursor(0, 1);
     lcd.print("  PUMP ON   AUTO");
+    delay(500);
   }
-  yield();
+  //yield();
 }
 
 String filter(String msg) {
@@ -160,7 +205,7 @@ String filter(String msg) {
 void Connect_WiFi() {
   Serial.begin(9600);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
+  //WiFi.config(local_ip, gateway, subnet);
   Serial.print("Connecting to Wi-Fi");
   while (WiFi.status() != WL_CONNECTED)
   {
@@ -183,6 +228,7 @@ void Connect_WiFi() {
   app.getApp<RealtimeDatabase>(Database);
   Database.url(DATABASE_URL);
 }
+
 ```
 ## CODE TANK
 ```
