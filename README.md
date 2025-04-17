@@ -246,7 +246,7 @@ void Connect_WiFi() {
 #define WIFI_SSID "PUMP"
 #define WIFI_PASSWORD "Pump*123"
 
-#define APIKEY "81844a75-57ba-4ca7-9f21-17e0e73a5582"
+#define APIKEY "07b74c9d-4f21-4461-ad23-9ea5debd8250"
 #define FW_VER "1.0.1"
 
 #define API_KEY "AIzaSyBMaU5oFpnm64xA1wJoGN3u2c3LyQtX4oM"
@@ -254,9 +254,9 @@ void Connect_WiFi() {
 #define USER_PASSWORD "Firebase123"
 #define DATABASE_URL "https://neer-d1234-default-rtdb.firebaseio.com/"
 
-const char* ntpServer = "pool.ntp.org";
-const long  gmtOffset_sec = 19800;
-const int   daylightOffset_sec = 3600;
+const char* ntpServer = "pool.ntp.org";    // GMT Offset for IST (India Standard Time) is +5:30, which equals 19800 seconds
+const long gmtOffset_sec = 19800;      // No daylight saving time (DST) for IST, so we set this to 0
+const int daylightOffset_sec = 0;
 
 SSL_CLIENT ssl_client;
 // This uses built-in core WiFi/Ethernet for network connection.
@@ -273,8 +273,8 @@ String filter(String);
 
 unsigned long lastFirebaseQueryTime = 0;
 unsigned long firebaseQueryInterval = 50;  // 5 seconds interval
-String buttonState; String autoState;
-int bottom; int top; int hour=0;
+String dataBase = "  ";
+int bottom; int top; int hour = 0;
 char timeHour[3];
 
 void setup() {
@@ -287,26 +287,28 @@ void setup() {
 
 void loop() {
   app.loop();
-  yield(); 
+  //yield(); 
 
   unsigned long currentMillis = millis();
+
   if (currentMillis - lastFirebaseQueryTime >= firebaseQueryInterval) {
     lastFirebaseQueryTime = currentMillis;
-    buttonState = filter(Database.get<String>(aClient, "BUTTONSTATE"));
-    autoState = filter(Database.get<String>(aClient, "AUTOSTATE"));
-    //Serial.print("BUTTONSTATE = ");
-    //Serial.println(buttonState);
+    dataBase = filter(Database.get<String>(aClient, "DATABASE"));
+    
+   // Serial.print("DATABASE = ");
+   // Serial.println(dataBase);
     //Serial.print("AUTOSTATE = ");
     //Serial.println(autoState);
   }
 
   bottom = digitalRead(float_bottom);
   top = digitalRead(float_top);
+  /*
   Serial.print("bottom = ");
   Serial.println(bottom);
   Serial.print("top = ");
   Serial.println(top);
-
+  */
   struct tm timeinfo;
   if(!getLocalTime(&timeinfo)){
     Serial.println("Failed to obtain time");
@@ -315,33 +317,44 @@ void loop() {
     return;
   }
   
-  strftime(timeHour,3, "%H", &timeinfo);
+  strftime(timeHour, 3, "%H", &timeinfo);
   hour = atoi(timeHour);
-  Serial.print("Time = ");
-  Serial.println(hour);
-  
-  if(autoState == "1")
+  //Serial.print("Time = ");
+  if(dataBase[1] == '1')
   {
-    if(bottom == 0 && top == 0 && hour >=5 && hour <= 23)
+    if(bottom == 0 && top == 0 && hour >=5 && hour <= 23) //
     {
-      Database.set<String>(aClient, "BUTTONSTATE", "1");
+      if(dataBase[0] == '1')
+      {
+        dataBase[0] = '2';
+      }
+      Database.set<String>(aClient, "DATABASE", dataBase);
     }
 
     if(bottom == 1 && top == 1)
     {
-      Database.set<String>(aClient, "BUTTONSTATE", "0");
+      if(dataBase[0] == '2')
+      {
+        dataBase[0] = '1';
+      }
+      Database.set<String>(aClient, "DATABASE", dataBase);
     }
   }
 
-   if(autoState == "0")
+  if(dataBase[1] == '0')
   {
     if(bottom == 1 && top == 1)
     {
-      Database.set<String>(aClient, "BUTTONSTATE", "0");
+      if(dataBase[0] == '2')
+      {
+        dataBase[0] = '1';
+      }
+      Database.set<String>(aClient, "DATABASE", dataBase);
     }
   }
   //yield();
 }
+
 
 String filter(String msg)
 {
@@ -351,7 +364,6 @@ String filter(String msg)
   msg.replace("\"", "");
   return msg;
 }
-
 
 void Connect_WiFi() {
   Serial.begin(9600);
@@ -378,7 +390,8 @@ void Connect_WiFi() {
     initializeApp(aClient, app, getAuth(user_auth), 120 * 1000, auth_debug_print);
     app.getApp<RealtimeDatabase>(Database);
     Database.url(DATABASE_URL);
-  }
+}
+
 ```
 
 ## CODE PANEL
