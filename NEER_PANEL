@@ -1,0 +1,195 @@
+#include <Arduino.h>
+#include <otadrive_esp.h>
+#include <ESP8266WiFi.h>
+#include <FirebaseClient.h>
+#include "ExampleFunctions.h"
+#include <ESP8266_ISR_Servo.h>
+//#include <Ticker.h> 
+#include <LittleFS.h>  // Use LittleFS instead of deprecated SPIFFS
+
+#ifndef ESP8266
+  #error This code is designed to run on ESP8266 platform! Please check your Tools->Board setting.
+#endif
+
+#define TIMER_INTERRUPT_DEBUG       1
+#define ISR_SERVO_DEBUG             1
+
+#define MIN_MICROS      800
+#define MAX_MICROS      2450
+
+int servoIndex1  = -1;  // MG996 (continuous)
+int servoIndex2  = -1;  // SG90 (positional)
+
+#define WIFI_SSID "PUMP"
+#define WIFI_PASSWORD "Pump*123"
+
+IPAddress local_IP(192, 168, 3, 135);
+IPAddress gateway(192, 168, 3, 1);
+IPAddress subnet(255, 255, 255, 0);
+IPAddress primaryDNS(8, 8, 8, 8);
+
+#define APIKEY "21ce97cd-bec3-4797-8744-f7b073182bb0"
+#define FW_VER "1.0.1"
+
+#define API_KEY "AIzaSyBMaU5oFpnm64xA1wJoGN3u2c3LyQtX4oM"
+#define USER_EMAIL "adityajyothirajyt@gmail.com"
+#define USER_PASSWORD "Firebase123"
+#define DATABASE_URL "https://neer-d1234-default-rtdb.firebaseio.com/"
+
+SSL_CLIENT ssl_client;
+using AsyncClient = AsyncClientClass;
+AsyncClient aClient(ssl_client);
+UserAuth user_auth(API_KEY, USER_EMAIL, USER_PASSWORD, 3000);
+FirebaseApp app;
+RealtimeDatabase Database;
+
+unsigned long lastFirebaseQueryTime = 0;
+unsigned long firebaseQueryInterval = 500;
+String dataBase = "";
+char lastButtonState = '\0';
+
+// MG996 pulse values
+uint16_t pulseStop = 1500;    // Neutral stop
+uint16_t pulseRight = 1700;   // Rotate forward (tweak if needed)
+uint16_t pulseLeft = 1300;  // Reverse direction
+
+void Connect_WiFi();
+String filter(String);
+//bool isInternetAvailable();
+//void checkInternetAndReconnect();
+//void resetWatchdog();
+
+//Ticker watchdogTimer;
+//Ticker internetCheckTimer;
+
+void setup() {
+  Serial.begin(9600);
+
+  // Initialize LittleFS (if ExampleFunctions.h uses file system)
+  LittleFS.begin();
+
+  Connect_WiFi();
+
+  servoIndex1 = ISR_Servo.setupServo(D1, MIN_MICROS, MAX_MICROS); // MG996
+  servoIndex2 = ISR_Servo.setupServo(D2, MIN_MICROS, MAX_MICROS); // SG90
+  ISR_Servo.setPulseWidth(servoIndex1, pulseStop);
+  ISR_Servo.setPosition(servoIndex2, 180);
+  OTADRIVE.setInfo(APIKEY, FW_VER);
+  //internetCheckTimer.attach(10, checkInternetAndReconnect); // Every 10s
+  //watchdogTimer.attach(15, resetWatchdog);  // Simulate watchdog
+}
+
+void loop() {
+  app.loop();
+
+  unsigned long currentMillis = millis();
+  if (currentMillis - lastFirebaseQueryTime >= firebaseQueryInterval) {
+    lastFirebaseQueryTime = currentMillis;
+    dataBase = filter(Database.get<String>(aClient, "DATABASE"));
+  }
+
+  if (dataBase.length() > 0 && dataBase[0] != lastButtonState) {
+    lastButtonState = dataBase[0];
+
+    if (dataBase[0] == '2') {
+      Serial.println("Turning ON switch (MG996)");
+
+      // Rotate MG996 briefly to press switch
+      ISR_Servo.setPulseWidth(servoIndex1, pulseRight);
+      delay(600); // Adjust this timing to suit your switch
+      ISR_Servo.setPulseWidth(servoIndex1, pulseLeft);
+      delay(600);
+      ISR_Servo.setPulseWidth(servoIndex1, pulseStop);
+    }
+
+    if (dataBase[0] == '1') {
+      Serial.println("Turning OFF switch (SG90)");
+
+      // Move SG90 to 0° and back
+      ISR_Servo.setPosition(servoIndex2, 0);
+      delay(2000);  // Give servo time to move
+      ISR_Servo.setPosition(servoIndex2, 180);
+    }
+  }
+}
+
+/*
+bool isInternetAvailable() {
+  WiFiClient client;
+  const char* host = "www.google.com";
+  const int port = 80;
+
+  if (client.connect(host, port)) {
+    client.stop();
+    return true;
+  }
+  return false;
+}
+
+
+// Auto reconnect WiFi/Internet if needed
+void checkInternetAndReconnect() {
+  if (WiFi.status() != WL_CONNECTED || !isInternetAvailable()) {
+    Serial.println("\n[WiFi/Internet Lost] Attempting reconnect...");
+
+    WiFi.disconnect();
+    delay(1000);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+    unsigned long startAttemptTime = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 10000) {
+      delay(500);
+      Serial.print(".");
+    }
+
+    if (WiFi.status() != WL_CONNECTED || !isInternetAvailable()) {
+      Serial.println("\n[ERROR] Still no internet. Restarting...");
+      ESP.restart();
+    } else {
+      Serial.println("\n[OK] Reconnected to internet.");
+    }
+  }
+}
+
+// Reset ESP if loop hangs
+void resetWatchdog() {
+  Serial.println("\n[Watchdog] No response, resetting...");
+  ESP.restart();
+}
+*/
+
+String filter(String msg) {
+  msg.replace("[", "");
+  msg.replace("]", "");
+  msg.replace("\\", "");
+  msg.replace("\"", "");
+  return msg;
+}
+
+void Connect_WiFi() {
+  if (!WiFi.config(local_IP, gateway, subnet, primaryDNS)) {
+    Serial.println("Failed to configure static IP");
+  }
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("Connecting to Wi-Fi");
+
+  while (WiFi.status() != WL_CONNECTED) {
+    if (OTADRIVE.timeTick(30)) {
+      OTADRIVE.updateFirmware();
+    }
+    Serial.print(".");
+    delay(300);
+  }
+
+  Serial.println();
+  Serial.print("Connected with IP: ");
+  Serial.println(WiFi.localIP());
+
+  Firebase.printf("Firebase Client v%s\n", FIREBASE_CLIENT_VERSION);
+  set_ssl_client_insecure_and_buffer(ssl_client);
+
+  Serial.println("Initializing Firebase...");
+  initializeApp(aClient, app, getAuth(user_auth), 120 * 1000, auth_debug_print);
+  app.getApp<RealtimeDatabase>(Database);
+  Database.url(DATABASE_URL);
+}
