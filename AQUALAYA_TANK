@@ -50,7 +50,7 @@ int bottom, top, hour = 0;
 char timeHour[3];
 
 void setup() {
-  //Serial.begin(9600);
+  Serial.begin(9600);
   Connect_WiFi();
 
   pinMode(float_bottom, INPUT_PULLUP);
