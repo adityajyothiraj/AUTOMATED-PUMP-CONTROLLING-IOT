@@ -23,10 +23,12 @@ int servoIndex2  = -1;  // SG90 (positional)
 #define WIFI_SSID "PUMP"
 #define WIFI_PASSWORD "Pump*123"
 
+/*
 IPAddress local_IP(192, 168, 3, 135);
 IPAddress gateway(192, 168, 3, 1);
 IPAddress subnet(255, 255, 255, 0);
 IPAddress primaryDNS(8, 8, 8, 8);
+*/
 
 #define APIKEY "21ce97cd-bec3-4797-8744-f7b073182bb0"
 #define FW_VER "1.0.1"
@@ -45,7 +47,7 @@ RealtimeDatabase Database;
 
 unsigned long lastFirebaseQueryTime = 0;
 unsigned long firebaseQueryInterval = 500;
-String dataBase = "";
+String dataBase = "  ";
 char lastButtonState = '\0';
 
 // MG996 pulse values
@@ -69,7 +71,6 @@ void setup() {
   LittleFS.begin();
 
   Connect_WiFi();
-
   servoIndex1 = ISR_Servo.setupServo(D1, MIN_MICROS, MAX_MICROS); // MG996
   servoIndex2 = ISR_Servo.setupServo(D2, MIN_MICROS, MAX_MICROS); // SG90
   ISR_Servo.setPulseWidth(servoIndex1, pulseStop);
@@ -167,9 +168,11 @@ String filter(String msg) {
 }
 
 void Connect_WiFi() {
+  /*
   if (!WiFi.config(local_IP, gateway, subnet, primaryDNS)) {
     Serial.println("Failed to configure static IP");
   }
+    */
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting to Wi-Fi");
 
