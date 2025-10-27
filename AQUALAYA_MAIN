@@ -4,15 +4,16 @@
 #include "ExampleFunctions.h"
 #include <otadrive_esp.h>
 #include <LiquidCrystal_I2C.h>
-#include "esp_task_wdt.h" // Watchdog library
+#include <WiFi.h>
+#include <HTTPClient.h> 
 
 #define led_Off 5
 #define led_On 16
 #define led_Auto 17
 #define button_Off 34
 #define button_On 35
-#define button_Auto 21
-#define relay 23
+#define button_Auto 14
+#define relay 18
 #define I2C_SDA 32
 #define I2C_SCL 33
 
@@ -23,9 +24,6 @@ IPAddress local_IP(192, 168, 3, 139);
 IPAddress gateway(192, 168, 3, 1);
 IPAddress subnet(255, 255, 255, 0);
 IPAddress primaryDNS(8, 8, 8, 8);
-
-#define APIKEY "c6eab4fa-591a-4672-ac9d-d040bc4935cd"
-#define FW_VER "1.0.1"
 
 #define API_KEY "AIzaSyBMaU5oFpnm64xA1wJoGN3u2c3LyQtX4oM"
 #define USER_EMAIL "adityajyothirajyt@gmail.com"
@@ -40,7 +38,6 @@ UserAuth user_auth(API_KEY, USER_EMAIL, USER_PASSWORD, 3000);
 FirebaseApp app;
 RealtimeDatabase Database;
 
-void Connect_WiFi();
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 String filter(String);
 
@@ -49,6 +46,9 @@ unsigned long firebaseQueryInterval = 500;
 
 String dataBase = "  ";
 int On = 0, Off = 0, Auto = 0;
+
+hw_timer_t * timer = NULL;
+volatile bool timerFired = false;
 
 const int debounceDelay = 50;
 unsigned long lastDebounceTime_Off = 0;
@@ -59,22 +59,32 @@ volatile bool buttonOffPressed = false;
 volatile bool buttonOnPressed = false;
 volatile bool buttonAutoPressed = false;
 
+bool timerStartedForRelayOff = false;
+
+unsigned long lastInternetCheck = 0;
+const unsigned long internetCheckInterval = 10000; 
+
 void IRAM_ATTR handleButtonOff() { buttonOffPressed = true; }
 void IRAM_ATTR handleButtonOn() { buttonOnPressed = true; }
 void IRAM_ATTR handleButtonAuto() { buttonAutoPressed = true; }
 
-bool isInternetAvailable() {
-  WiFiClient client;
-  const char* host = "www.google.com";
-  const int port = 80;
-  if (client.connect(host, port)) {
-    client.stop();
-    return true;
-  }
-  return false;
+void Connect_WiFi();
+
+void IRAM_ATTR onTimer() {
+  timerFired = true;
+}
+
+bool hasInternet() {
+  HTTPClient http;
+  http.setConnectTimeout(3000); 
+  http.begin("http://clients3.google.com/generate_204");
+  int httpCode = http.GET();
+  http.end();
+  return (httpCode == 204);
 }
 
 void setup() {
+  Serial.begin(9600);
   Connect_WiFi();
 
   pinMode(led_Off, OUTPUT);
@@ -89,59 +99,48 @@ void setup() {
   lcd.backlight();
   lcd.clear();
   lcd.setCursor(4, 0);
-  lcd.print("NEER H20");
+  lcd.print("AQUALAYA");
   lcd.setCursor(3, 1);
   lcd.print("SAVE WATER");
-
-  OTADRIVE.setInfo(APIKEY, FW_VER);
 
   attachInterrupt(digitalPinToInterrupt(button_Off), handleButtonOff, FALLING);
   attachInterrupt(digitalPinToInterrupt(button_On), handleButtonOn, FALLING);
   attachInterrupt(digitalPinToInterrupt(button_Auto), handleButtonAuto, FALLING);
 
-  // Initialize Watchdog with 10s timeout
-  esp_task_wdt_init(10, true);
-  esp_task_wdt_add(NULL); // Add main loop to watchdog
+  // Timer config (auto-reload after 8 sec)
+  timer = timerBegin(0, 80, true);
+  timerAttachInterrupt(timer, &onTimer, true);
+  timerAlarmWrite(timer, 8000000, true); // 8 sec timer
+  timerAlarmDisable(timer);
 }
 
 void loop() {
-  esp_task_wdt_reset(); // Reset watchdog
-
-  // Check internet availability
-  if (!isInternetAvailable()) {
-    Serial.println("No internet connection. Reconnecting...");
-    WiFi.disconnect();
-    delay(1000);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-    unsigned long startAttempt = millis();
-    while (!isInternetAvailable() && millis() - startAttempt < 10000) {
-      delay(500);
-      Serial.print(".");
-    }
-
-    if (!isInternetAvailable()) {
-      Serial.println("Internet unavailable after retry. Restarting ESP...");
-      ESP.restart();
-    } else {
-      Serial.println("Reconnected to Internet!");
-    }
-  }
-
-  app.loop();
+  app.loop(); 
 
   unsigned long currentMillis = millis();
+
+  // ✅ Periodically check internet connection
+  if (currentMillis - lastInternetCheck >= internetCheckInterval) {
+    lastInternetCheck = currentMillis;
+
+    if (WiFi.status() != WL_CONNECTED || !hasInternet()) {
+      //Serial.println("No internet. Reconnecting WiFi...");
+      WiFi.disconnect();
+      delay(1000);
+      Connect_WiFi(); // Try reconnecting
+    } //else {
+      //Serial.println("Internet OK");
+    //}
+  }
+
   if (currentMillis - lastFirebaseQueryTime >= firebaseQueryInterval) {
     lastFirebaseQueryTime = currentMillis;
     dataBase = filter(Database.get<String>(aClient, "DATABASE"));
   }
 
-  // Button OFF
+  // OFF button
   if (buttonOffPressed && (millis() - lastDebounceTime_Off) > debounceDelay) {
-    if (dataBase[1] == '0') {
-      dataBase[0] = '1';
-    } else if (dataBase[1] == '1') {
-      dataBase[1] = '0';
+    if (dataBase[1] == '0' || dataBase[1] == '1') {
       dataBase[0] = '1';
     }
     Database.set<String>(aClient, "DATABASE", dataBase);
@@ -149,12 +148,9 @@ void loop() {
     buttonOffPressed = false;
   }
 
-  // Button ON
+  // ON button
   if (buttonOnPressed && (millis() - lastDebounceTime_On) > debounceDelay) {
-    if (dataBase[1] == '0') {
-      dataBase[0] = '2';
-    } else if (dataBase[1] == '1') {
-      dataBase[1] = '0';
+    if (dataBase[1] == '0' || dataBase[1] == '1') {
       dataBase[0] = '2';
     }
     Database.set<String>(aClient, "DATABASE", dataBase);
@@ -162,7 +158,7 @@ void loop() {
     buttonOnPressed = false;
   }
 
-  // Button AUTO
+  // AUTO button
   if (buttonAutoPressed && (millis() - lastDebounceTime_Auto) > debounceDelay) {
     if (dataBase[1] == '0') {
       dataBase[1] = '1';
@@ -174,21 +170,39 @@ void loop() {
     buttonAutoPressed = false;
   }
 
-  // Pump control logic
+  // Timer expired
+  if (timerFired) {
+    digitalWrite(relay, LOW);  // Turn OFF pump
+    timerFired = false;
+    timerStartedForRelayOff = false;
+    timerAlarmDisable(timer);
+  }
+
+  // Pump logic
   if (dataBase[0] == '1') {
     lcd.setCursor(0, 1);
     lcd.print("     PUMP OFF    ");
     digitalWrite(led_On, LOW);
     digitalWrite(led_Off, HIGH);
-    digitalWrite(relay, LOW);
+
+    if (!timerStartedForRelayOff) {
+      timerStartedForRelayOff = true;
+      timerFired = false;
+      timerAlarmEnable(timer); // Start 8-second timer
+    }
+
   } else if (dataBase[0] == '2') {
     lcd.setCursor(0, 1);
     lcd.print("     PUMP ON     ");
     digitalWrite(led_Off, LOW);
     digitalWrite(led_On, HIGH);
     digitalWrite(relay, HIGH);
+    timerStartedForRelayOff = false;
+    timerFired = false;
+    timerAlarmDisable(timer);
   }
 
+  // Auto LED and LCD status
   if (dataBase[1] == '0' && dataBase[0] == '1') {
     digitalWrite(led_Auto, LOW);
     lcd.setCursor(0, 1);
@@ -201,12 +215,10 @@ void loop() {
     digitalWrite(led_Auto, HIGH);
     lcd.setCursor(0, 1);
     lcd.print("  PUMP OFF  AUTO ");
-    delay(500);
   } else if (dataBase[1] == '1' && dataBase[0] == '2') {
     digitalWrite(led_Auto, HIGH);
     lcd.setCursor(0, 1);
     lcd.print("  PUMP ON   AUTO ");
-    delay(500);
   }
 }
 
@@ -220,22 +232,23 @@ String filter(String msg) {
 
 void Connect_WiFi() {
   Serial.begin(9600);
-  if (!WiFi.config(local_IP, gateway, subnet, primaryDNS)) {
-    Serial.println("Failed to configure static IP");
-  }
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting to Wi-Fi");
-  while (WiFi.status() != WL_CONNECTED) {
-    if (OTADRIVE.timeTick(30)) {
-      //OTADRIVE.updateFirmware();
-    }
-    Serial.print(".");
-    delay(300);
+
+  int retries = 0;
+  while (WiFi.status() != WL_CONNECTED && retries < 20) {
+    //delay(500);
+    //Serial.print(".");
+    retries++;
   }
-  Serial.println();
-  //Serial.print("Connected with IP: ");
-  //Serial.println(WiFi.localIP());
-  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    //Serial.println("\nWiFi Connected!");
+    //Serial.print("IP Address: ");
+    //Serial.println(WiFi.localIP());
+  } //else {
+    //Serial.println("\nFailed to connect to WiFi!");
+  //}
 
   Firebase.printf("Firebase Client v%s\n", FIREBASE_CLIENT_VERSION);
   set_ssl_client_insecure_and_buffer(ssl_client);
